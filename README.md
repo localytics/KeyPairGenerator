@@ -19,18 +19,18 @@ This section is for people who only need the CLI. You do not need Go, Make, or a
 
 ### Download
 
-Get the binary for your OS and CPU from the [latest GitHub Release](https://github.com/localytics/KeyPairGenerator/releases/latest):
+Open the [Releases](https://github.com/localytics/KeyPairGenerator/releases) page and download the asset that matches your OS and CPU. Those files are created by the Release workflow; they are not in the repository itself.
 
-| Platform | Architecture | Download |
+| Platform | Architecture | Asset name |
 | --- | --- | --- |
-| Linux | amd64 | [keypair-generator-linux-amd64](https://github.com/localytics/KeyPairGenerator/releases/latest/download/keypair-generator-linux-amd64) |
-| Linux | arm64 | [keypair-generator-linux-arm64](https://github.com/localytics/KeyPairGenerator/releases/latest/download/keypair-generator-linux-arm64) |
-| Linux | 386 | [keypair-generator-linux-386](https://github.com/localytics/KeyPairGenerator/releases/latest/download/keypair-generator-linux-386) |
-| Windows | amd64 | [keypair-generator-windows-amd64.exe](https://github.com/localytics/KeyPairGenerator/releases/latest/download/keypair-generator-windows-amd64.exe) |
-| Windows | arm64 | [keypair-generator-windows-arm64.exe](https://github.com/localytics/KeyPairGenerator/releases/latest/download/keypair-generator-windows-arm64.exe) |
-| Windows | 386 | [keypair-generator-windows-386.exe](https://github.com/localytics/KeyPairGenerator/releases/latest/download/keypair-generator-windows-386.exe) |
-| macOS | amd64 | [keypair-generator-darwin-amd64](https://github.com/localytics/KeyPairGenerator/releases/latest/download/keypair-generator-darwin-amd64) |
-| macOS | arm64 | [keypair-generator-darwin-arm64](https://github.com/localytics/KeyPairGenerator/releases/latest/download/keypair-generator-darwin-arm64) |
+| Linux | amd64 | `keypair-generator-linux-amd64` |
+| Linux | arm64 | `keypair-generator-linux-arm64` |
+| Linux | 386 | `keypair-generator-linux-386` |
+| Windows | amd64 | `keypair-generator-windows-amd64.exe` |
+| Windows | arm64 | `keypair-generator-windows-arm64.exe` |
+| Windows | 386 | `keypair-generator-windows-386.exe` |
+| macOS | amd64 | `keypair-generator-darwin-amd64` |
+| macOS | arm64 | `keypair-generator-darwin-arm64` |
 
 macOS on Apple Silicon is `darwin-arm64`. Intel Macs are `darwin-amd64`. There is no 32-bit macOS build.
 
@@ -38,17 +38,16 @@ Each release also includes `checksums.txt` with SHA-256 hashes of every binary.
 
 **Linux / macOS**
 
+On the release, copy the asset URL (right-click the file → Copy link), then:
+
 ```bash
-curl -sSL -o keypair-generator \
-  https://github.com/localytics/KeyPairGenerator/releases/latest/download/keypair-generator-darwin-arm64
+curl -sSL -o keypair-generator 'PASTE_ASSET_URL'
 chmod +x keypair-generator
 ```
 
-Replace the download URL with the row from the table that matches your machine.
-
 **Windows**
 
-Download `keypair-generator-windows-amd64.exe` (or arm64 / 386) from the release page, then run it from PowerShell or Command Prompt.
+Download `keypair-generator-windows-amd64.exe` (or arm64 / 386) from the same Releases page, then run it from PowerShell or Command Prompt.
 
 ### Create a new key pair
 
@@ -174,12 +173,9 @@ go run ./cmd/keypair-generator --generate
 
 ### Publish binaries
 
-Pushing a `v*` tag runs the [Release](.github/workflows/release.yml) workflow, which compiles `linux`, `windows`, and `darwin` for `amd64`, `arm64`, and `386` (except `darwin/386`) and attaches them to that tag's GitHub Release.
+Run the [Release](.github/workflows/release.yml) workflow from the Actions tab. Enter a version such as `v0.1.0`. The workflow creates that tag, pushes it, compiles `linux`, `windows`, and `darwin` for `amd64`, `arm64`, and `386` (except `darwin/386`), and attaches the binaries to the GitHub Release.
 
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
+Pushing a `v*` tag yourself still runs the same build and publish jobs.
 
 ### Makefile
 
