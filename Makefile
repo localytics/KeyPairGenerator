@@ -2,15 +2,16 @@
 BINARY_NAME=keypair-generator
 GO=go
 GOFLAGS=-v
+CMD=./cmd/keypair-generator
 
-.PHONY: all build clean test fmt run generate help
+.PHONY: all build clean test fmt lint run generate help
 
 all: clean fmt test build
 
 ## build: Build the keypair-generator binary into bin/
 build:
 	@echo "Building $(BINARY_NAME)..."
-	$(GO) build $(GOFLAGS) -o bin/$(BINARY_NAME) .
+	$(GO) build $(GOFLAGS) -o bin/$(BINARY_NAME) $(CMD)
 
 ## clean: Remove bin/, rsa_key files, and coverage artifacts
 clean:
@@ -24,10 +25,14 @@ test:
 	@echo "Running tests..."
 	$(GO) test -v -race -count=1 ./...
 
-## fmt: Format and vet the package
+## fmt: Format and vet the module
 fmt:
 	$(GO) fmt ./...
 	$(GO) vet ./...
+
+## lint: Run golangci-lint
+lint:
+	golangci-lint run ./...
 
 ## run: Build and print values from existing rsa_key.p8 / rsa_key.pub
 run: build
@@ -35,7 +40,7 @@ run: build
 
 ## generate: Build and create a new unencrypted PKCS#8 key pair in the current directory
 generate: build
-	./bin/$(BINARY_NAME) -generate
+	./bin/$(BINARY_NAME) --generate
 
 ## help: Show this help message
 help:
