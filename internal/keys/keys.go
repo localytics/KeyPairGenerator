@@ -124,9 +124,10 @@ func ReadAndValidate(privatePath, publicPath string) (privatePEM, publicPEM []by
 	return privatePEM, publicPEM, nil
 }
 
-// PEMBody returns the base64 body of the first PEM block, which Snowflake
-// expects for ALTER USER ... RSA_PUBLIC_KEY. The PEM headers and newlines
-// are not included.
+// PEMBody returns the standard Base64 of the first PEM block's DER bytes.
+// That value starts with MIIE for a 2048-bit PKCS#8 RSA key, not LS0t
+// (which is Base64 of the ----- PEM header). Use it for both
+// SNOWFLAKE_PRIVATE_KEY_B64 and Snowflake ALTER USER ... RSA_PUBLIC_KEY.
 func PEMBody(pemBytes []byte) (string, error) {
 	block, _ := pem.Decode(pemBytes)
 	if block == nil {

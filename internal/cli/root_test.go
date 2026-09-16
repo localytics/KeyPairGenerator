@@ -22,6 +22,24 @@ func execute(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	return out.String(), errBuf.String(), err
 }
 
+func printedSecret(t *testing.T, stdout string) string {
+	t.Helper()
+
+	const label = "AWS secret key: SNOWFLAKE_PRIVATE_KEY_B64\n"
+
+	_, rest, ok := strings.Cut(stdout, label)
+	if !ok {
+		t.Fatalf("stdout missing secret label:\n%s", stdout)
+	}
+
+	secret, _, _ := strings.Cut(rest, "\n")
+	if secret == "" {
+		t.Fatal("empty secret")
+	}
+
+	return secret
+}
+
 func TestGenerateAndPrint(t *testing.T) {
 	t.Parallel()
 
@@ -34,6 +52,15 @@ func TestGenerateAndPrint(t *testing.T) {
 
 	if !strings.Contains(stdout, "SNOWFLAKE_PRIVATE_KEY_B64") {
 		t.Fatalf("stdout missing secret label:\n%s", stdout)
+	}
+
+	secret := printedSecret(t, stdout)
+	if !strings.HasPrefix(secret, "MIIE") {
+		t.Fatalf("secret %q, want prefix MIIE (DER), not PEM", secret)
+	}
+
+	if strings.HasPrefix(secret, "LS0t") {
+		t.Fatal("secret is base64 of PEM headers")
 	}
 
 	if !strings.Contains(stdout, "ALTER USER") {

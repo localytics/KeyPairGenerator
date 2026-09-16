@@ -2,7 +2,6 @@
 package cli
 
 import (
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -48,7 +47,7 @@ the AWS secret and Snowflake ALTER USER values.
 
 Every run reads rsa_key.p8 and rsa_key.pub, then prints:
 
-  1. SNOWFLAKE_PRIVATE_KEY_B64 — Base64 of the full private PEM. Store this as the AWS secret.
+  1. SNOWFLAKE_PRIVATE_KEY_B64 — Base64 of the private key DER (starts with MIIE). Store this as the AWS secret.
   2. A Snowflake ALTER USER statement with the public key body (no PEM headers).
 
 Missing key files are an error unless --generate is also set. Encrypted private keys are rejected.`,
@@ -182,6 +181,11 @@ func run(cmd *cobra.Command, opts *options) error {
 		return err
 	}
 
+	privateBody, err := keys.PEMBody(privatePEM)
+	if err != nil {
+		return fmt.Errorf("private key: %w", err)
+	}
+
 	body, err := keys.PEMBody(publicPEM)
 	if err != nil {
 		return fmt.Errorf("public key: %w", err)
@@ -192,7 +196,7 @@ func run(cmd *cobra.Command, opts *options) error {
 		return err
 	}
 
-	if err := writeLine(out, "%s", base64.StdEncoding.EncodeToString(privatePEM)); err != nil {
+	if err := writeLine(out, "%s", privateBody); err != nil {
 		return err
 	}
 

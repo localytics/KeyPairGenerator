@@ -7,7 +7,7 @@ $ ./keypair-generator --generate
 wrote ./rsa_key.p8
 wrote ./rsa_key.pub
 AWS secret key: SNOWFLAKE_PRIVATE_KEY_B64
-<base64 of the private PEM>
+<base64 of the private key DER, starts with MIIE>
 
 Snowflake:
 ALTER USER {?user?} SET RSA_PUBLIC_KEY='<public key body>';
@@ -65,7 +65,7 @@ keypair-generator-windows-amd64.exe --generate
 
 That writes `rsa_key.p8` (private) and `rsa_key.pub` (public) in the current directory, then prints:
 
-1. **`SNOWFLAKE_PRIVATE_KEY_B64`** — Base64 of the full private PEM. Paste this into the AWS secret named `SNOWFLAKE_PRIVATE_KEY_B64`.
+1. **`SNOWFLAKE_PRIVATE_KEY_B64`** — Base64 of the private key DER (starts with `MIIE`, not `LS0t`). Paste this into the AWS secret named `SNOWFLAKE_PRIVATE_KEY_B64`.
 2. **Snowflake `ALTER USER`** — run this statement after replacing `{?user?}` with the Snowflake user.
 
 Treat `rsa_key.p8` as a secret. Do not email it, commit it, or share it.
