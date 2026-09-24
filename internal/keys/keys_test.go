@@ -160,6 +160,87 @@ func TestReadAndValidateHeaderCommentIsNotEnough(t *testing.T) {
 	}
 }
 
+func TestVerifyMatch(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	privatePath := filepath.Join(dir, PrivateFile)
+	publicPath := filepath.Join(dir, PublicFile)
+
+	if err := WriteNewPair(privatePath, publicPath, MinBits, false); err != nil {
+		t.Fatal(err)
+	}
+
+	privatePEM, publicPEM, err := ReadAndValidate(privatePath, publicPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := VerifyMatch(privatePEM, publicPEM); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestVerifyMatchMismatch(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	privatePath := filepath.Join(dir, PrivateFile)
+	publicPath := filepath.Join(dir, PublicFile)
+
+	if err := WriteNewPair(privatePath, publicPath, MinBits, false); err != nil {
+		t.Fatal(err)
+	}
+
+	privatePEM, _, err := ReadAndValidate(privatePath, publicPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	otherDir := t.TempDir()
+	otherPrivatePath := filepath.Join(otherDir, PrivateFile)
+	otherPublicPath := filepath.Join(otherDir, PublicFile)
+
+	if err := WriteNewPair(otherPrivatePath, otherPublicPath, MinBits, false); err != nil {
+		t.Fatal(err)
+	}
+
+	_, otherPublicPEM, err := ReadAndValidate(otherPrivatePath, otherPublicPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = VerifyMatch(privatePEM, otherPublicPEM)
+	if !errors.Is(err, ErrKeyMismatch) {
+		t.Fatalf("error %v, want ErrKeyMismatch", err)
+	}
+}
+
+func TestVerifyMatchBadPEM(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	privatePath := filepath.Join(dir, PrivateFile)
+	publicPath := filepath.Join(dir, PublicFile)
+
+	if err := WriteNewPair(privatePath, publicPath, MinBits, false); err != nil {
+		t.Fatal(err)
+	}
+
+	privatePEM, publicPEM, err := ReadAndValidate(privatePath, publicPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := VerifyMatch([]byte("not a pem"), publicPEM); !errors.Is(err, ErrPEMMissing) {
+		t.Fatalf("error %v, want ErrPEMMissing", err)
+	}
+
+	if err := VerifyMatch(privatePEM, []byte("not a pem")); !errors.Is(err, ErrPEMMissing) {
+		t.Fatalf("error %v, want ErrPEMMissing", err)
+	}
+}
+
 func TestPEMBody(t *testing.T) {
 	t.Parallel()
 

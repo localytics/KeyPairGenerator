@@ -3,6 +3,7 @@
 package keys
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -19,6 +20,8 @@ const (
 	PrivateFile = "rsa_key.p8"
 	// PublicFile is the PKIX public-key filename written next to PrivateFile.
 	PublicFile = "rsa_key.pub"
+	// OutputFile is the filename that receives the Base64 values.
+	OutputFile = "output.txt"
 	// MinBits is the smallest RSA modulus this package will generate.
 	MinBits = 2048
 )
@@ -34,6 +37,10 @@ var (
 	ErrPEMType = errors.New("keys: unexpected pem type")
 	// ErrPEMMissing reports that the file does not contain a PEM block.
 	ErrPEMMissing = errors.New("keys: missing pem block")
+	// ErrKeyMismatch reports that the public key does not correspond to the private key.
+	ErrKeyMismatch = errors.New("keys: public key does not match private key")
+	// ErrNotRSA reports that a private key is not an RSA key.
+	ErrNotRSA = errors.New("keys: private key is not RSA")
 )
 
 // WriteNewPair creates an unencrypted PKCS#8 private key and matching PKIX
@@ -124,10 +131,9 @@ func ReadAndValidate(privatePath, publicPath string) (privatePEM, publicPEM []by
 	return privatePEM, publicPEM, nil
 }
 
-// PEMBody returns the standard Base64 of the first PEM block's DER bytes.
-// That value starts with MIIE for a 2048-bit PKCS#8 RSA key, not LS0t
-// (which is Base64 of the ----- PEM header). Use it for both
-// SNOWFLAKE_PRIVATE_KEY_B64 and Snowflake ALTER USER ... RSA_PUBLIC_KEY.
+// PEMBody returns the base64 body of the first PEM block, which Snowflake
+// expects for ALTER USER ... SET RSA_PUBLIC_KEY. The PEM headers and
+// newlines are not included.
 func PEMBody(pemBytes []byte) (string, error) {
 	block, _ := pem.Decode(pemBytes)
 	if block == nil {
@@ -135,6 +141,42 @@ func PEMBody(pemBytes []byte) (string, error) {
 	}
 
 	return base64.StdEncoding.EncodeToString(block.Bytes), nil
+}
+
+// VerifyMatch reports whether the public key encoded in publicPEM is the one
+// that corresponds to privatePEM. Callers should run ReadAndValidate first so
+// both blocks are already known to be well-formed PKCS#8/PKIX PEM.
+func VerifyMatch(privatePEM, publicPEM []byte) error {
+	privateBlock, _ := pem.Decode(privatePEM)
+	if privateBlock == nil {
+		return ErrPEMMissing
+	}
+
+	parsedKey, err := x509.ParsePKCS8PrivateKey(privateBlock.Bytes)
+	if err != nil {
+		return fmt.Errorf("parse private key: %w", err)
+	}
+
+	rsaKey, ok := parsedKey.(*rsa.PrivateKey)
+	if !ok {
+		return ErrNotRSA
+	}
+
+	publicBlock, _ := pem.Decode(publicPEM)
+	if publicBlock == nil {
+		return ErrPEMMissing
+	}
+
+	wantDER, err := x509.MarshalPKIXPublicKey(&rsaKey.PublicKey)
+	if err != nil {
+		return fmt.Errorf("marshal derived public key: %w", err)
+	}
+
+	if !bytes.Equal(wantDER, publicBlock.Bytes) {
+		return ErrKeyMismatch
+	}
+
+	return nil
 }
 
 func requireBlock(pemBytes []byte, wantType string) error {

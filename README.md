@@ -1,16 +1,17 @@
 # KeyPairGenerator
 
-CLI that generates an unencrypted PKCS#8 RSA key pair and prints the values needed for Snowflake key-pair auth and the `SNOWFLAKE_PRIVATE_KEY_B64` AWS secret key.
+CLI that generates an unencrypted PKCS#8 RSA key pair and writes the values needed for Snowflake key-pair auth and the `SNOWFLAKE_PRIVATE_KEY_B64` AWS secret key to `output.txt` and stdout.
 
 ```text
 $ ./keypair-generator --generate
 wrote ./rsa_key.p8
 wrote ./rsa_key.pub
+wrote ./output.txt
 AWS secret key: SNOWFLAKE_PRIVATE_KEY_B64
-<base64 of the private key DER, starts with MIIE>
+LS0tLS1CRUdJTi...
 
 Snowflake:
-ALTER USER {?user?} SET RSA_PUBLIC_KEY='<public key body>';
+ALTER USER {} SET RSA_PUBLIC_KEY='MIIBIjANBgkqh...';
 ```
 
 ## Users
@@ -63,20 +64,33 @@ Windows:
 keypair-generator-windows-amd64.exe --generate
 ```
 
-That writes `rsa_key.p8` (private) and `rsa_key.pub` (public) in the current directory, then prints:
+That writes `rsa_key.p8` (private), `rsa_key.pub` (public), and `output.txt` in the current directory. `output.txt` contains:
 
-1. **`SNOWFLAKE_PRIVATE_KEY_B64`** — Base64 of the private key DER (starts with `MIIE`, not `LS0t`). Paste this into the AWS secret named `SNOWFLAKE_PRIVATE_KEY_B64`.
-2. **Snowflake `ALTER USER`** — run this statement after replacing `{?user?}` with the Snowflake user.
+1. **`SNOWFLAKE_PRIVATE_KEY_B64`** — Base64 of the full private PEM (starts with `LS0t`, which is `-----BEGIN ...`). Paste this into the AWS secret named `SNOWFLAKE_PRIVATE_KEY_B64`. Consumers that `pem.Decode` the decoded bytes need the headers.
+2. **Snowflake `ALTER USER ... SET RSA_PUBLIC_KEY`** — run this statement after replacing `{}` if you did not pass `--user`. The public key value is the PEM body only (no headers).
 
-Treat `rsa_key.p8` as a secret. Do not email it, commit it, or share it.
+Treat `rsa_key.p8` and `output.txt` as secrets. Do not email them, commit them, or share them.
 
-### Print values from existing keys
+### Write values from existing keys
 
 If `rsa_key.p8` and `rsa_key.pub` are already in the current directory:
 
 ```bash
 ./keypair-generator
 ```
+
+That overwrites `output.txt` with the same Base64 values and prints the same text to stdout. The private key secret appears in your terminal and scrollback, so redirect stdout (`./keypair-generator > /dev/null`) if you only want the file.
+
+### Verify a key pair matches
+
+Confirm that `rsa_key.pub` actually corresponds to `rsa_key.p8` (catches a stale or mixed-up public key file):
+
+```bash
+./keypair-generator test
+./keypair-generator test --dir ./snowflake-keys
+```
+
+On success it prints `OK: ... matches ...` and exits 0. On a mismatch it exits 1 with an error.
 
 ### Help
 
@@ -85,14 +99,15 @@ If `rsa_key.p8` and `rsa_key.pub` are already in the current directory:
 ./keypair-generator --help
 ```
 
-That lists every command, flag, example, and what the printed values mean.
+That lists every command, flag, example, and what `output.txt` contains.
 
 ### Flags
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `--dir`, `-d` | `.` | Directory that contains (or will receive) `rsa_key.p8` and `rsa_key.pub` |
-| `--generate`, `-g` | `false` | Create a new unencrypted PKCS#8 key pair before printing |
+| `--dir`, `-d` | `.` | Directory that contains (or will receive) `rsa_key.p8`, `rsa_key.pub`, and `output.txt` |
+| `--user`, `-u` | `{}` | Snowflake user written into the `ALTER USER` statement |
+| `--generate`, `-g` | `false` | Create a new unencrypted PKCS#8 key pair before writing `output.txt` |
 | `--force`, `-f` | `false` | Allow `--generate` to overwrite existing key files |
 | `--bits`, `-b` | `2048` | RSA key size used only with `--generate` (minimum 2048) |
 | `--help`, `-h` | | Show the same help as `help` |
@@ -101,6 +116,7 @@ Write keys in another directory, or replace an existing pair:
 
 ```bash
 ./keypair-generator --dir ./snowflake-keys --generate
+./keypair-generator --generate --user EXAMPLE_USER
 ./keypair-generator --generate --force --bits 4096
 ```
 
@@ -126,7 +142,7 @@ PowerShell:
 ./keypair-generator-windows-amd64.exe completion powershell | Out-String | Invoke-Expression
 ```
 
-After that, Tab completes `help`, `completion`, `--dir` / `-d`, `--generate` / `-g`, `--force` / `-f`, `--bits` / `-b`, directories after `--dir`, and `2048` / `4096` after `--bits`.
+After that, Tab completes `help`, `completion`, `test`, `--dir` / `-d`, `--user` / `-u`, `--generate` / `-g`, `--force` / `-f`, `--bits` / `-b`, directories after `--dir`, and `2048` / `4096` after `--bits`.
 
 **Persistent**
 
@@ -182,12 +198,12 @@ Pushing a `v*` tag yourself still runs the same build and publish jobs.
 | Target | Action |
 | --- | --- |
 | `make build` | Build `bin/keypair-generator` |
-| `make run` | Build, then print values from existing keys |
-| `make generate` | Build, then create a new pair in `.` and print values |
+| `make run` | Build, then write `output.txt` from existing keys |
+| `make generate` | Build, then create a new pair in `.` and write `output.txt` |
 | `make test` | Run package tests |
 | `make fmt` | `go fmt` and `go vet` |
 | `make lint` | Run golangci-lint |
-| `make clean` | Remove `bin/`, `rsa_key` / `rsa_key.p8` / `rsa_key.pub`, and coverage artifacts |
+| `make clean` | Remove `bin/`, `rsa_key` / `rsa_key.p8` / `rsa_key.pub` / `output.txt`, and coverage artifacts |
 | `make help` | List targets |
 
 ### Contributing

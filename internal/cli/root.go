@@ -2,9 +2,11 @@
 package cli
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -27,8 +29,11 @@ func (e *UsageError) Unwrap() error {
 	return e.Err
 }
 
+const defaultUser = "{}"
+
 type options struct {
 	dir      string
+	user     string
 	generate bool
 	force    bool
 	bits     int
@@ -41,14 +46,14 @@ func New() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "keypair-generator",
-		Short: "Generate or print Snowflake RSA key-pair values",
-		Long: `keypair-generator creates or reads an unencrypted PKCS#8 RSA key pair and prints
-the AWS secret and Snowflake ALTER USER values.
+		Short: "Generate Snowflake RSA key-pair values",
+		Long: `keypair-generator creates or reads an unencrypted PKCS#8 RSA key pair and writes
+the AWS secret and Snowflake ALTER USER values to output.txt and stdout.
 
-Every run reads rsa_key.p8 and rsa_key.pub, then prints:
+Every run reads rsa_key.p8 and rsa_key.pub, then writes output.txt (and prints the same text to stdout) with:
 
-  1. SNOWFLAKE_PRIVATE_KEY_B64 — Base64 of the private key DER (starts with MIIE). Store this as the AWS secret.
-  2. A Snowflake ALTER USER statement with the public key body (no PEM headers).
+  1. SNOWFLAKE_PRIVATE_KEY_B64 — Base64 of the full private PEM (starts with LS0t). Store this as the AWS secret.
+  2. A Snowflake ALTER USER ... SET RSA_PUBLIC_KEY statement with the public key body (no PEM headers).
 
 Missing key files are an error unless --generate is also set. Encrypted private keys are rejected.`,
 		Example: `  # Create a new key pair in the current directory
@@ -60,8 +65,11 @@ Missing key files are an error unless --generate is also set. Encrypted private 
   # Replace an existing pair with a 4096-bit key
   keypair-generator --generate --force --bits 4096
 
-  # Print values from keys that already exist
-  keypair-generator`,
+  # Write values from keys that already exist
+  keypair-generator
+
+  # Name the Snowflake user in output.txt
+  keypair-generator --user EXAMPLE_USER`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.NoArgs(cmd, args); err != nil {
 				return &UsageError{Err: err}
@@ -76,7 +84,8 @@ Missing key files are an error unless --generate is also set. Encrypted private 
 		},
 	}
 
-	cmd.Flags().StringVarP(&opts.dir, "dir", "d", ".", "directory for rsa_key.p8 and rsa_key.pub")
+	cmd.Flags().StringVarP(&opts.dir, "dir", "d", ".", "directory for rsa_key.p8, rsa_key.pub, and output.txt")
+	cmd.Flags().StringVarP(&opts.user, "user", "u", defaultUser, "Snowflake user in the ALTER USER statement")
 	cmd.Flags().BoolVarP(&opts.generate, "generate", "g", false, "create a new unencrypted PKCS#8 key pair")
 	cmd.Flags().BoolVarP(&opts.force, "force", "f", false, "overwrite existing key files when generating")
 	cmd.Flags().IntVarP(&opts.bits, "bits", "b", keys.MinBits, "RSA key size when generating")
@@ -94,13 +103,75 @@ Missing key files are an error unless --generate is also set. Encrypted private 
 			"4096\tLarger modulus",
 		}, cobra.ShellCompDirectiveNoFileComp
 	})
+	_ = cmd.RegisterFlagCompletionFunc("user", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	})
 
 	// A real subcommand makes Cobra register `help`. Disable the default
 	// completion command so we do not get two of them.
 	cmd.CompletionOptions.DisableDefaultCmd = true
 	cmd.AddCommand(newCompletionCommand(cmd))
+	cmd.AddCommand(newTestCommand())
 
 	return cmd
+}
+
+func newTestCommand() *cobra.Command {
+	var dir string
+
+	cmd := &cobra.Command{
+		Use:   "test",
+		Short: "Verify that rsa_key.p8 and rsa_key.pub are a matching pair",
+		Long: `test reads rsa_key.p8 and rsa_key.pub and confirms the public key derived
+from the private key matches the public key file, catching a mismatched or
+stale rsa_key.pub.`,
+		Example: `  # Check the pair in the current directory
+  keypair-generator test
+
+  # Check a pair in another directory
+  keypair-generator test --dir ./keys`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.NoArgs(cmd, args); err != nil {
+				return &UsageError{Err: err}
+			}
+
+			return nil
+		},
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runTest(cmd, dir)
+		},
+	}
+
+	cmd.Flags().StringVarP(&dir, "dir", "d", ".", "directory containing rsa_key.p8 and rsa_key.pub")
+
+	cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		return &UsageError{Err: err}
+	})
+
+	_ = cmd.RegisterFlagCompletionFunc("dir", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return nil, cobra.ShellCompDirectiveFilterDirs
+	})
+
+	return cmd
+}
+
+func runTest(cmd *cobra.Command, dirFlag string) error {
+	dir := filepath.Clean(dirFlag)
+	privatePath := filepath.Join(dir, keys.PrivateFile)
+	publicPath := filepath.Join(dir, keys.PublicFile)
+
+	privatePEM, publicPEM, err := keys.ReadAndValidate(privatePath, publicPath)
+	if err != nil {
+		return err
+	}
+
+	if err := keys.VerifyMatch(privatePEM, publicPEM); err != nil {
+		return err
+	}
+
+	return writeLine(cmd.OutOrStdout(), "OK: %s matches %s", publicPath, privatePath)
 }
 
 func newCompletionCommand(root *cobra.Command) *cobra.Command {
@@ -181,34 +252,37 @@ func run(cmd *cobra.Command, opts *options) error {
 		return err
 	}
 
-	privateBody, err := keys.PEMBody(privatePEM)
-	if err != nil {
-		return fmt.Errorf("private key: %w", err)
-	}
-
 	body, err := keys.PEMBody(publicPEM)
 	if err != nil {
 		return fmt.Errorf("public key: %w", err)
 	}
 
-	out := cmd.OutOrStdout()
-	if err := writeLine(out, "AWS secret key: SNOWFLAKE_PRIVATE_KEY_B64"); err != nil {
+	user := opts.user
+	if user == "" {
+		user = defaultUser
+	}
+
+	outputPath := filepath.Join(dir, keys.OutputFile)
+	contents := fmt.Sprintf(
+		"AWS secret key: SNOWFLAKE_PRIVATE_KEY_B64\n%s\n\nSnowflake:\nALTER USER %s SET RSA_PUBLIC_KEY='%s';\n",
+		base64.StdEncoding.EncodeToString(privatePEM),
+		user,
+		body,
+	)
+
+	if err := os.WriteFile(outputPath, []byte(contents), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", outputPath, err)
+	}
+
+	if err := writeLine(cmd.ErrOrStderr(), "wrote %s", outputPath); err != nil {
 		return err
 	}
 
-	if err := writeLine(out, "%s", privateBody); err != nil {
-		return err
+	if _, err := io.WriteString(cmd.OutOrStdout(), contents); err != nil {
+		return fmt.Errorf("write output: %w", err)
 	}
 
-	if err := writeLine(out, ""); err != nil {
-		return err
-	}
-
-	if err := writeLine(out, "Snowflake:"); err != nil {
-		return err
-	}
-
-	return writeLine(out, "ALTER USER {?user?} SET RSA_PUBLIC_KEY='%s';", body)
+	return nil
 }
 
 func writeLine(w io.Writer, format string, args ...any) error {

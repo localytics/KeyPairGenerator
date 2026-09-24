@@ -1,6 +1,7 @@
 # Generated RSA key pair
 rsa_key.p8
 rsa_key.pub
+output.txt
 
 # Binaries for programs and plugins
 *.exe

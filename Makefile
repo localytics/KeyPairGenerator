@@ -13,11 +13,11 @@ build:
 	@echo "Building $(BINARY_NAME)..."
 	$(GO) build $(GOFLAGS) -o bin/$(BINARY_NAME) $(CMD)
 
-## clean: Remove bin/, rsa_key files, and coverage artifacts
+## clean: Remove bin/, rsa_key files, output.txt, and coverage artifacts
 clean:
 	@echo "Cleaning..."
 	rm -rf bin/
-	rm -f rsa_key rsa_key.p8 rsa_key.pub
+	rm -f rsa_key rsa_key.p8 rsa_key.pub output.txt
 	rm -f coverage.out coverage.html
 
 ## test: Run tests
@@ -34,7 +34,7 @@ fmt:
 lint:
 	golangci-lint run ./...
 
-## run: Build and print values from existing rsa_key.p8 / rsa_key.pub
+## run: Build and write output.txt from existing rsa_key.p8 / rsa_key.pub
 run: build
 	./bin/$(BINARY_NAME)
 
