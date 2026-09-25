@@ -1,6 +1,6 @@
 # KeyPairGenerator
 
-CLI that generates an unencrypted PKCS#8 RSA key pair and writes the values needed for Snowflake key-pair auth and the `SNOWFLAKE_PRIVATE_KEY_B64` AWS secret key to `output.txt` and stdout.
+CLI that generates a PKCS#8 RSA key pair and writes the values needed for Snowflake key-pair auth and the `SNOWFLAKE_PRIVATE_KEY_B64` AWS secret key to `output.txt` and stdout. Pass `--passphrase` to encrypt the private key.
 
 ```text
 $ ./keypair-generator --generate
@@ -107,9 +107,10 @@ That lists every command, flag, example, and what `output.txt` contains.
 | --- | --- | --- |
 | `--dir`, `-d` | `.` | Directory that contains (or will receive) `rsa_key.p8`, `rsa_key.pub`, and `output.txt` |
 | `--user`, `-u` | `{}` | Snowflake user written into the `ALTER USER` statement |
-| `--generate`, `-g` | `false` | Create a new unencrypted PKCS#8 key pair before writing `output.txt` |
+| `--generate`, `-g` | `false` | Create a new PKCS#8 key pair before writing `output.txt` |
 | `--force`, `-f` | `false` | Allow `--generate` to overwrite existing key files |
 | `--bits`, `-b` | `2048` | RSA key size used only with `--generate` (minimum 2048) |
+| `--passphrase`, `-p` | | Encrypt a new private key, or decrypt an existing one. Not written to `output.txt` |
 | `--help`, `-h` | | Show the same help as `help` |
 
 Write keys in another directory, or replace an existing pair:
@@ -118,6 +119,7 @@ Write keys in another directory, or replace an existing pair:
 ./keypair-generator --dir ./snowflake-keys --generate
 ./keypair-generator --generate --user EXAMPLE_USER
 ./keypair-generator --generate --force --bits 4096
+./keypair-generator --generate --passphrase 'your passphrase'
 ```
 
 ### Tab completion
@@ -142,7 +144,7 @@ PowerShell:
 ./keypair-generator-windows-amd64.exe completion powershell | Out-String | Invoke-Expression
 ```
 
-After that, Tab completes `help`, `completion`, `test`, `--dir` / `-d`, `--user` / `-u`, `--generate` / `-g`, `--force` / `-f`, `--bits` / `-b`, directories after `--dir`, and `2048` / `4096` after `--bits`.
+After that, Tab completes `help`, `completion`, `test`, `--dir` / `-d`, `--user` / `-u`, `--generate` / `-g`, `--force` / `-f`, `--bits` / `-b`, `--passphrase` / `-p`, directories after `--dir`, and `2048` / `4096` after `--bits`.
 
 **Persistent**
 
@@ -159,11 +161,12 @@ After that, Tab completes `help`, `completion`, `test`, `--dir` / `-d`, `--user`
 
 ### Key format
 
-The CLI only accepts unencrypted PKCS#8 PEMs:
+The CLI accepts PKCS#8 PEMs:
 
-- Private file must be a `PRIVATE KEY` PEM block
+- An unencrypted private file is a `PRIVATE KEY` PEM block
+- `--passphrase` writes an `ENCRYPTED PRIVATE KEY` block (PBES2 AES-256-CBC, PBKDF2-HMAC-SHA256). The same flag is required to read or `test` that file. The passphrase is not stored in `output.txt`; keep it somewhere else. The AWS secret is the encrypted PEM, so the consumer needs the passphrase too
 - Public file must be a `PUBLIC KEY` PEM block
-- Encrypted private keys (`ENCRYPTED PRIVATE KEY`) are rejected
+- An encrypted private key is rejected unless `--passphrase` is set
 
 If the key files are missing, the process exits with an error unless you also pass `--generate`.
 

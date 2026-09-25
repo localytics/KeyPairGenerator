@@ -1,5 +1,5 @@
-// Command keypair-generator generates or reads an unencrypted PKCS#8 RSA
-// key pair and prints Snowflake / AWS secret values.
+// Command keypair-generator generates or reads a PKCS#8 RSA key pair and
+// prints Snowflake / AWS secret values. A passphrase encrypts the private key.
 package main
 
 import (

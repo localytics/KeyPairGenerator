@@ -16,11 +16,11 @@ func TestWriteNewPairAndRead(t *testing.T) {
 	privatePath := filepath.Join(dir, PrivateFile)
 	publicPath := filepath.Join(dir, PublicFile)
 
-	if err := WriteNewPair(privatePath, publicPath, MinBits, false); err != nil {
+	if err := WriteNewPair(privatePath, publicPath, MinBits, false, ""); err != nil {
 		t.Fatal(err)
 	}
 
-	privatePEM, publicPEM, err := ReadAndValidate(privatePath, publicPath)
+	privatePEM, publicPEM, err := ReadAndValidate(privatePath, publicPath, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,16 +50,16 @@ func TestWriteNewPairExists(t *testing.T) {
 	privatePath := filepath.Join(dir, PrivateFile)
 	publicPath := filepath.Join(dir, PublicFile)
 
-	if err := WriteNewPair(privatePath, publicPath, MinBits, false); err != nil {
+	if err := WriteNewPair(privatePath, publicPath, MinBits, false, ""); err != nil {
 		t.Fatal(err)
 	}
 
-	err := WriteNewPair(privatePath, publicPath, MinBits, false)
+	err := WriteNewPair(privatePath, publicPath, MinBits, false, "")
 	if !errors.Is(err, ErrExists) {
 		t.Fatalf("error %v, want ErrExists", err)
 	}
 
-	if err := WriteNewPair(privatePath, publicPath, MinBits, true); err != nil {
+	if err := WriteNewPair(privatePath, publicPath, MinBits, true, ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -67,7 +67,7 @@ func TestWriteNewPairExists(t *testing.T) {
 func TestWriteNewPairBitsTooSmall(t *testing.T) {
 	t.Parallel()
 
-	err := WriteNewPair("unused.p8", "unused.pub", 1024, true)
+	err := WriteNewPair("unused.p8", "unused.pub", 1024, true, "")
 	if !errors.Is(err, ErrBitsTooSmall) {
 		t.Fatalf("error %v, want ErrBitsTooSmall", err)
 	}
@@ -84,7 +84,7 @@ func TestWriteNewPairRemovesPrivateOnPublicFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := WriteNewPair(privatePath, publicPath, MinBits, true)
+	err := WriteNewPair(privatePath, publicPath, MinBits, true, "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -112,7 +112,7 @@ func TestReadAndValidateEncrypted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err := ReadAndValidate(privatePath, publicPath)
+	_, _, err := ReadAndValidate(privatePath, publicPath, "")
 	if !errors.Is(err, ErrEncrypted) {
 		t.Fatalf("error %v, want ErrEncrypted", err)
 	}
@@ -133,7 +133,7 @@ func TestReadAndValidateMissingPEM(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err := ReadAndValidate(privatePath, publicPath)
+	_, _, err := ReadAndValidate(privatePath, publicPath, "")
 	if !errors.Is(err, ErrPEMMissing) {
 		t.Fatalf("error %v, want ErrPEMMissing", err)
 	}
@@ -154,7 +154,7 @@ func TestReadAndValidateHeaderCommentIsNotEnough(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err := ReadAndValidate(privatePath, publicPath)
+	_, _, err := ReadAndValidate(privatePath, publicPath, "")
 	if !errors.Is(err, ErrPEMMissing) {
 		t.Fatalf("error %v, want ErrPEMMissing", err)
 	}
@@ -167,16 +167,16 @@ func TestVerifyMatch(t *testing.T) {
 	privatePath := filepath.Join(dir, PrivateFile)
 	publicPath := filepath.Join(dir, PublicFile)
 
-	if err := WriteNewPair(privatePath, publicPath, MinBits, false); err != nil {
+	if err := WriteNewPair(privatePath, publicPath, MinBits, false, ""); err != nil {
 		t.Fatal(err)
 	}
 
-	privatePEM, publicPEM, err := ReadAndValidate(privatePath, publicPath)
+	privatePEM, publicPEM, err := ReadAndValidate(privatePath, publicPath, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := VerifyMatch(privatePEM, publicPEM); err != nil {
+	if err := VerifyMatch(privatePEM, publicPEM, ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -188,11 +188,11 @@ func TestVerifyMatchMismatch(t *testing.T) {
 	privatePath := filepath.Join(dir, PrivateFile)
 	publicPath := filepath.Join(dir, PublicFile)
 
-	if err := WriteNewPair(privatePath, publicPath, MinBits, false); err != nil {
+	if err := WriteNewPair(privatePath, publicPath, MinBits, false, ""); err != nil {
 		t.Fatal(err)
 	}
 
-	privatePEM, _, err := ReadAndValidate(privatePath, publicPath)
+	privatePEM, _, err := ReadAndValidate(privatePath, publicPath, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,16 +201,16 @@ func TestVerifyMatchMismatch(t *testing.T) {
 	otherPrivatePath := filepath.Join(otherDir, PrivateFile)
 	otherPublicPath := filepath.Join(otherDir, PublicFile)
 
-	if err := WriteNewPair(otherPrivatePath, otherPublicPath, MinBits, false); err != nil {
+	if err := WriteNewPair(otherPrivatePath, otherPublicPath, MinBits, false, ""); err != nil {
 		t.Fatal(err)
 	}
 
-	_, otherPublicPEM, err := ReadAndValidate(otherPrivatePath, otherPublicPath)
+	_, otherPublicPEM, err := ReadAndValidate(otherPrivatePath, otherPublicPath, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = VerifyMatch(privatePEM, otherPublicPEM)
+	err = VerifyMatch(privatePEM, otherPublicPEM, "")
 	if !errors.Is(err, ErrKeyMismatch) {
 		t.Fatalf("error %v, want ErrKeyMismatch", err)
 	}
@@ -223,22 +223,71 @@ func TestVerifyMatchBadPEM(t *testing.T) {
 	privatePath := filepath.Join(dir, PrivateFile)
 	publicPath := filepath.Join(dir, PublicFile)
 
-	if err := WriteNewPair(privatePath, publicPath, MinBits, false); err != nil {
+	if err := WriteNewPair(privatePath, publicPath, MinBits, false, ""); err != nil {
 		t.Fatal(err)
 	}
 
-	privatePEM, publicPEM, err := ReadAndValidate(privatePath, publicPath)
+	privatePEM, publicPEM, err := ReadAndValidate(privatePath, publicPath, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := VerifyMatch([]byte("not a pem"), publicPEM); !errors.Is(err, ErrPEMMissing) {
+	if err := VerifyMatch([]byte("not a pem"), publicPEM, ""); !errors.Is(err, ErrPEMMissing) {
 		t.Fatalf("error %v, want ErrPEMMissing", err)
 	}
 
-	if err := VerifyMatch(privatePEM, []byte("not a pem")); !errors.Is(err, ErrPEMMissing) {
+	if err := VerifyMatch(privatePEM, []byte("not a pem"), ""); !errors.Is(err, ErrPEMMissing) {
 		t.Fatalf("error %v, want ErrPEMMissing", err)
 	}
+}
+
+func TestWriteNewPairWithPassphrase(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	privatePath := filepath.Join(dir, PrivateFile)
+	publicPath := filepath.Join(dir, PublicFile)
+	passphrase := "test-passphrase"
+
+	if err := WriteNewPair(privatePath, publicPath, MinBits, false, passphrase); err != nil {
+		t.Fatal(err)
+	}
+
+	//nolint:gosec // G304: path is a t.TempDir() file this test just wrote
+	raw, err := os.ReadFile(privatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	block, _ := pem.Decode(raw)
+	if block == nil || block.Type != "ENCRYPTED PRIVATE KEY" {
+		t.Fatalf("pem type %q, want ENCRYPTED PRIVATE KEY", blockType(block))
+	}
+
+	if _, _, err := ReadAndValidate(privatePath, publicPath, ""); !errors.Is(err, ErrEncrypted) {
+		t.Fatalf("error %v, want ErrEncrypted", err)
+	}
+
+	privatePEM, publicPEM, err := ReadAndValidate(privatePath, publicPath, passphrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := VerifyMatch(privatePEM, publicPEM, passphrase); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := VerifyMatch(privatePEM, publicPEM, "wrong-passphrase"); !errors.Is(err, ErrPassphrase) {
+		t.Fatalf("error %v, want ErrPassphrase", err)
+	}
+}
+
+func blockType(block *pem.Block) string {
+	if block == nil {
+		return ""
+	}
+
+	return block.Type
 }
 
 func TestPEMBody(t *testing.T) {

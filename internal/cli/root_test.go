@@ -246,7 +246,7 @@ func TestHelp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, part := range []string{"--dir", "--generate", "--force", "--bits", "--user", "SNOWFLAKE_PRIVATE_KEY_B64"} {
+	for _, part := range []string{"--dir", "--generate", "--force", "--bits", "--user", "--passphrase", "SNOWFLAKE_PRIVATE_KEY_B64"} {
 		if !strings.Contains(stdout, part) {
 			t.Errorf("help missing %q", part)
 		}
@@ -288,6 +288,46 @@ func TestExitCode(t *testing.T) {
 				t.Fatalf("ExitCode() = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestGenerateWithPassphrase(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	passphrase := "test-passphrase"
+
+	_, stderr, err := execute(t, "--dir", dir, "--generate", "--passphrase", passphrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(stderr, "private key is encrypted") {
+		t.Fatalf("stderr missing encryption note:\n%s", stderr)
+	}
+
+	secret := outputSecret(t, readOutput(t, dir))
+
+	pemBytes, err := base64.StdEncoding.DecodeString(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.HasPrefix(pemBytes, []byte("-----BEGIN ENCRYPTED PRIVATE KEY-----")) {
+		t.Fatalf("decoded secret %q, want encrypted PEM header", pemBytes)
+	}
+
+	if _, _, err := execute(t, "test", "--dir", dir); !errors.Is(err, keys.ErrEncrypted) {
+		t.Fatalf("error %v, want ErrEncrypted", err)
+	}
+
+	stdout, _, err := execute(t, "test", "--dir", dir, "--passphrase", passphrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(stdout, "OK: ") {
+		t.Fatalf("stdout missing OK line:\n%s", stdout)
 	}
 }
 

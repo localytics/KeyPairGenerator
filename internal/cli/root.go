@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -32,11 +33,12 @@ func (e *UsageError) Unwrap() error {
 const defaultUser = "{}"
 
 type options struct {
-	dir      string
-	user     string
-	generate bool
-	force    bool
-	bits     int
+	dir        string
+	user       string
+	passphrase string
+	generate   bool
+	force      bool
+	bits       int
 }
 
 // New returns a fresh command tree. Callers must not reuse the same
@@ -47,7 +49,7 @@ func New() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "keypair-generator",
 		Short: "Generate Snowflake RSA key-pair values",
-		Long: `keypair-generator creates or reads an unencrypted PKCS#8 RSA key pair and writes
+		Long: `keypair-generator creates or reads a PKCS#8 RSA key pair and writes
 the AWS secret and Snowflake ALTER USER values to output.txt and stdout.
 
 Every run reads rsa_key.p8 and rsa_key.pub, then writes output.txt (and prints the same text to stdout) with:
@@ -55,7 +57,7 @@ Every run reads rsa_key.p8 and rsa_key.pub, then writes output.txt (and prints t
   1. SNOWFLAKE_PRIVATE_KEY_B64 — Base64 of the full private PEM (starts with LS0t). Store this as the AWS secret.
   2. A Snowflake ALTER USER ... SET RSA_PUBLIC_KEY statement with the public key body (no PEM headers).
 
-Missing key files are an error unless --generate is also set. Encrypted private keys are rejected.`,
+Missing key files are an error unless --generate is also set. Pass --passphrase to encrypt a new private key, or to read an encrypted one. The passphrase is not written to output.txt.`,
 		Example: `  # Create a new key pair in the current directory
   keypair-generator --generate
 
@@ -64,6 +66,9 @@ Missing key files are an error unless --generate is also set. Encrypted private 
 
   # Replace an existing pair with a 4096-bit key
   keypair-generator --generate --force --bits 4096
+
+  # Encrypt the private key with a passphrase
+  keypair-generator --generate --passphrase 'your passphrase'
 
   # Write values from keys that already exist
   keypair-generator
@@ -86,9 +91,10 @@ Missing key files are an error unless --generate is also set. Encrypted private 
 
 	cmd.Flags().StringVarP(&opts.dir, "dir", "d", ".", "directory for rsa_key.p8, rsa_key.pub, and output.txt")
 	cmd.Flags().StringVarP(&opts.user, "user", "u", defaultUser, "Snowflake user in the ALTER USER statement")
-	cmd.Flags().BoolVarP(&opts.generate, "generate", "g", false, "create a new unencrypted PKCS#8 key pair")
+	cmd.Flags().BoolVarP(&opts.generate, "generate", "g", false, "create a new PKCS#8 key pair")
 	cmd.Flags().BoolVarP(&opts.force, "force", "f", false, "overwrite existing key files when generating")
 	cmd.Flags().IntVarP(&opts.bits, "bits", "b", keys.MinBits, "RSA key size when generating")
+	cmd.Flags().StringVarP(&opts.passphrase, "passphrase", "p", "", "encrypt a new private key, or decrypt an existing one")
 
 	cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return &UsageError{Err: err}
@@ -106,6 +112,9 @@ Missing key files are an error unless --generate is also set. Encrypted private 
 	_ = cmd.RegisterFlagCompletionFunc("user", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	})
+	_ = cmd.RegisterFlagCompletionFunc("passphrase", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	})
 
 	// A real subcommand makes Cobra register `help`. Disable the default
 	// completion command so we do not get two of them.
@@ -117,14 +126,17 @@ Missing key files are an error unless --generate is also set. Encrypted private 
 }
 
 func newTestCommand() *cobra.Command {
-	var dir string
+	var (
+		dir        string
+		passphrase string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "test",
 		Short: "Verify that rsa_key.p8 and rsa_key.pub are a matching pair",
 		Long: `test reads rsa_key.p8 and rsa_key.pub and confirms the public key derived
 from the private key matches the public key file, catching a mismatched or
-stale rsa_key.pub.`,
+stale rsa_key.pub. Pass --passphrase when the private key is encrypted.`,
 		Example: `  # Check the pair in the current directory
   keypair-generator test
 
@@ -140,11 +152,12 @@ stale rsa_key.pub.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runTest(cmd, dir)
+			return runTest(cmd, dir, passphrase)
 		},
 	}
 
 	cmd.Flags().StringVarP(&dir, "dir", "d", ".", "directory containing rsa_key.p8 and rsa_key.pub")
+	cmd.Flags().StringVarP(&passphrase, "passphrase", "p", "", "passphrase for an encrypted private key")
 
 	cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return &UsageError{Err: err}
@@ -153,21 +166,24 @@ stale rsa_key.pub.`,
 	_ = cmd.RegisterFlagCompletionFunc("dir", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 		return nil, cobra.ShellCompDirectiveFilterDirs
 	})
+	_ = cmd.RegisterFlagCompletionFunc("passphrase", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	})
 
 	return cmd
 }
 
-func runTest(cmd *cobra.Command, dirFlag string) error {
+func runTest(cmd *cobra.Command, dirFlag, passphrase string) error {
 	dir := filepath.Clean(dirFlag)
 	privatePath := filepath.Join(dir, keys.PrivateFile)
 	publicPath := filepath.Join(dir, keys.PublicFile)
 
-	privatePEM, publicPEM, err := keys.ReadAndValidate(privatePath, publicPath)
+	privatePEM, publicPEM, err := keys.ReadAndValidate(privatePath, publicPath, passphrase)
 	if err != nil {
 		return err
 	}
 
-	if err := keys.VerifyMatch(privatePEM, publicPEM); err != nil {
+	if err := keys.VerifyMatch(privatePEM, publicPEM, passphrase); err != nil {
 		return err
 	}
 
@@ -234,7 +250,7 @@ func run(cmd *cobra.Command, opts *options) error {
 	publicPath := filepath.Join(dir, keys.PublicFile)
 
 	if opts.generate {
-		if err := keys.WriteNewPair(privatePath, publicPath, opts.bits, opts.force); err != nil {
+		if err := keys.WriteNewPair(privatePath, publicPath, opts.bits, opts.force, opts.passphrase); err != nil {
 			return err
 		}
 
@@ -247,9 +263,15 @@ func run(cmd *cobra.Command, opts *options) error {
 		}
 	}
 
-	privatePEM, publicPEM, err := keys.ReadAndValidate(privatePath, publicPath)
+	privatePEM, publicPEM, err := keys.ReadAndValidate(privatePath, publicPath, opts.passphrase)
 	if err != nil {
 		return err
+	}
+
+	if bytes.Contains(privatePEM, []byte("ENCRYPTED PRIVATE KEY")) {
+		if err := writeLine(cmd.ErrOrStderr(), "private key is encrypted; the passphrase is not included in %s", keys.OutputFile); err != nil {
+			return err
+		}
 	}
 
 	body, err := keys.PEMBody(publicPEM)

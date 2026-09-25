@@ -1,9 +1,10 @@
-// Package keys generates and validates unencrypted PKCS#8 RSA key files
-// for Snowflake key-pair authentication.
+// Package keys generates and validates PKCS#8 RSA key files for Snowflake
+// key-pair authentication. A non-empty passphrase encrypts the private key.
 package keys
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -13,6 +14,8 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+
+	"github.com/youmark/pkcs8"
 )
 
 const (
@@ -26,11 +29,16 @@ const (
 	MinBits = 2048
 )
 
+const pemEncryptedPrivate = "ENCRYPTED PRIVATE KEY"
+
 var (
 	// ErrExists reports that a key file is already on disk and --force was not set.
 	ErrExists = errors.New("keys: file already exists")
-	// ErrEncrypted reports that the private PEM is an encrypted PKCS#8 key.
+	// ErrEncrypted reports that the private PEM is an encrypted PKCS#8 key
+	// and no passphrase was provided.
 	ErrEncrypted = errors.New("keys: private key is encrypted")
+	// ErrPassphrase reports that the passphrase did not decrypt the private key.
+	ErrPassphrase = errors.New("keys: wrong passphrase")
 	// ErrBitsTooSmall reports that --bits is below MinBits.
 	ErrBitsTooSmall = errors.New("keys: bits below minimum")
 	// ErrPEMType reports that a PEM block is not the expected type.
@@ -43,13 +51,24 @@ var (
 	ErrNotRSA = errors.New("keys: private key is not RSA")
 )
 
-// WriteNewPair creates an unencrypted PKCS#8 private key and matching PKIX
-// public key. It refuses to overwrite existing files unless force is true.
-// bits must be at least MinBits.
+// pkcs8EncryptOpts is PBES2 AES-256-CBC with PBKDF2-HMAC-SHA256, which
+// Snowflake Go clients can decrypt. IterationCount is the OWASP 2023 floor.
+var pkcs8EncryptOpts = &pkcs8.Opts{
+	Cipher: pkcs8.AES256CBC,
+	KDFOpts: pkcs8.PBKDF2Opts{
+		SaltSize:       16,
+		IterationCount: 600000,
+		HMACHash:       crypto.SHA256,
+	},
+}
+
+// WriteNewPair creates a PKCS#8 private key and matching PKIX public key.
+// A non-empty passphrase writes an encrypted private key. It refuses to
+// overwrite existing files unless force is true. bits must be at least MinBits.
 //
 // The private file is written first (mode 0600). If the public write fails,
 // the private file is removed so a half-written pair is not left behind.
-func WriteNewPair(privatePath, publicPath string, bits int, force bool) error {
+func WriteNewPair(privatePath, publicPath string, bits int, force bool, passphrase string) error {
 	if bits < MinBits {
 		return fmt.Errorf("%w: %d < %d", ErrBitsTooSmall, bits, MinBits)
 	}
@@ -73,9 +92,9 @@ func WriteNewPair(privatePath, publicPath string, bits int, force bool) error {
 		return fmt.Errorf("generate rsa key: %w", err)
 	}
 
-	privateDER, err := x509.MarshalPKCS8PrivateKey(key)
+	privatePEM, err := marshalPrivatePEM(key, passphrase)
 	if err != nil {
-		return fmt.Errorf("marshal private key: %w", err)
+		return err
 	}
 
 	publicDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
@@ -83,7 +102,6 @@ func WriteNewPair(privatePath, publicPath string, bits int, force bool) error {
 		return fmt.Errorf("marshal public key: %w", err)
 	}
 
-	privatePEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER})
 	publicPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicDER})
 
 	if err := os.WriteFile(privatePath, privatePEM, 0o600); err != nil {
@@ -105,9 +123,9 @@ func WriteNewPair(privatePath, publicPath string, bits int, force bool) error {
 	return nil
 }
 
-// ReadAndValidate loads both PEM files and checks they are unencrypted
-// PKCS#8 / PKIX blocks. Encrypted private keys and non-PEM files fail.
-func ReadAndValidate(privatePath, publicPath string) (privatePEM, publicPEM []byte, err error) {
+// ReadAndValidate loads both PEM files and checks they are PKCS#8 / PKIX
+// blocks. Encrypted private keys fail unless passphrase decrypts them.
+func ReadAndValidate(privatePath, publicPath, passphrase string) (privatePEM, publicPEM []byte, err error) {
 	//nolint:gosec // G304: paths are chosen by the operator via --dir
 	privatePEM, err = os.ReadFile(privatePath)
 	if err != nil {
@@ -120,7 +138,7 @@ func ReadAndValidate(privatePath, publicPath string) (privatePEM, publicPEM []by
 		return nil, nil, fmt.Errorf("read %s: %w", publicPath, err)
 	}
 
-	if err := requireBlock(privatePEM, "PRIVATE KEY"); err != nil {
+	if err := validatePrivate(privatePEM, passphrase); err != nil {
 		return nil, nil, fmt.Errorf("%s: %w", privatePath, err)
 	}
 
@@ -144,22 +162,18 @@ func PEMBody(pemBytes []byte) (string, error) {
 }
 
 // VerifyMatch reports whether the public key encoded in publicPEM is the one
-// that corresponds to privatePEM. Callers should run ReadAndValidate first so
-// both blocks are already known to be well-formed PKCS#8/PKIX PEM.
-func VerifyMatch(privatePEM, publicPEM []byte) error {
+// that corresponds to privatePEM. passphrase decrypts an encrypted private key.
+// Callers should run ReadAndValidate first so both blocks are already known
+// to be well-formed PKCS#8/PKIX PEM.
+func VerifyMatch(privatePEM, publicPEM []byte, passphrase string) error {
 	privateBlock, _ := pem.Decode(privatePEM)
 	if privateBlock == nil {
 		return ErrPEMMissing
 	}
 
-	parsedKey, err := x509.ParsePKCS8PrivateKey(privateBlock.Bytes)
+	rsaKey, err := rsaPrivateKey(privateBlock, passphrase)
 	if err != nil {
-		return fmt.Errorf("parse private key: %w", err)
-	}
-
-	rsaKey, ok := parsedKey.(*rsa.PrivateKey)
-	if !ok {
-		return ErrNotRSA
+		return err
 	}
 
 	publicBlock, _ := pem.Decode(publicPEM)
@@ -179,13 +193,83 @@ func VerifyMatch(privatePEM, publicPEM []byte) error {
 	return nil
 }
 
+func marshalPrivatePEM(key *rsa.PrivateKey, passphrase string) ([]byte, error) {
+	if passphrase == "" {
+		der, err := x509.MarshalPKCS8PrivateKey(key)
+		if err != nil {
+			return nil, fmt.Errorf("marshal private key: %w", err)
+		}
+
+		return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), nil
+	}
+
+	der, err := pkcs8.MarshalPrivateKey(key, []byte(passphrase), pkcs8EncryptOpts)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt private key: %w", err)
+	}
+
+	return pem.EncodeToMemory(&pem.Block{Type: pemEncryptedPrivate, Bytes: der}), nil
+}
+
+func validatePrivate(pemBytes []byte, passphrase string) error {
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		return ErrPEMMissing
+	}
+
+	switch block.Type {
+	case pemEncryptedPrivate:
+		if passphrase == "" {
+			return ErrEncrypted
+		}
+
+		_, err := rsaPrivateKey(block, passphrase)
+
+		return err
+	case "PRIVATE KEY":
+		return nil
+	default:
+		return fmt.Errorf("%w: %q, want %q", ErrPEMType, block.Type, "PRIVATE KEY")
+	}
+}
+
+func rsaPrivateKey(block *pem.Block, passphrase string) (*rsa.PrivateKey, error) {
+	var (
+		parsed any
+		err    error
+	)
+
+	if block.Type == pemEncryptedPrivate {
+		if passphrase == "" {
+			return nil, ErrEncrypted
+		}
+
+		parsed, err = pkcs8.ParsePKCS8PrivateKey(block.Bytes, []byte(passphrase))
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrPassphrase, err)
+		}
+	} else {
+		parsed, err = x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("parse private key: %w", err)
+		}
+	}
+
+	rsaKey, ok := parsed.(*rsa.PrivateKey)
+	if !ok {
+		return nil, ErrNotRSA
+	}
+
+	return rsaKey, nil
+}
+
 func requireBlock(pemBytes []byte, wantType string) error {
 	block, _ := pem.Decode(pemBytes)
 	if block == nil {
 		return ErrPEMMissing
 	}
 
-	if block.Type == "ENCRYPTED PRIVATE KEY" {
+	if block.Type == pemEncryptedPrivate {
 		return ErrEncrypted
 	}
 
